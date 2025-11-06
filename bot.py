@@ -6,9 +6,9 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # === CONFIG ===
 TOKEN = '8289859791:AAHiocOgPA_GuJ2TPxX4n_BN3-SA2RVIps0'
-OWNER_ID = 335065525  # твой Telegram ID
+OWNER_ID = 335065525  # your Telegram ID
 DEFAULT_PERCENTAGE = 1.3
-DEFAULT_TAX = 7
+TAX = 7
 AFTER_HOURS_RATE = 75
 
 # === Google Sheets Setup ===
@@ -19,10 +19,9 @@ sheet = client.open("Dispatcher Salary Tracker").sheet1
 
 # === Bot Setup ===
 bot = telebot.TeleBot(TOKEN)
-
 user_data = {}
 
-# === Start Command ===
+# === Start ===
 @bot.message_handler(commands=['start'])
 def start(message):
     if message.chat.id != OWNER_ID:
@@ -34,78 +33,11 @@ def start(message):
     markup.add("⚙️ Settings")
     bot.send_message(message.chat.id, "👋 Welcome to Dispatcher Salary Bot!\nChoose an option:", reply_markup=markup)
 
-# === Add Load ===
-@bot.message_handler(func=lambda m: m.text == "➕ Add Load")
-def add_load(message):
-    bot.send_message(message.chat.id, "Enter gross amount ($):")
-    bot.register_next_step_handler(message, process_gross)
-
-def process_gross(message):
-    try:
-        gross = float(message.text)
-        percentage = user_data.get("percentage", DEFAULT_PERCENTAGE)
-        tax = user_data.get("tax", DEFAULT_TAX)
-        salary = gross * (percentage / 100)
-        salary_after_tax = salary * (1 - tax / 100)
-        user_data.setdefault("month_data", []).append(salary_after_tax)
-        bot.send_message(message.chat.id, f"✅ Salary from this load: ${salary_after_tax:.2f}")
-    except:
-        bot.send_message(message.chat.id, "❌ Invalid number. Try again.")
-
-# === Add After Hours ===
-@bot.message_handler(func=lambda m: m.text == "🌙 Add After Hours")
-def add_after_hours(message):
-    bot.send_message(message.chat.id, "Enter number of shifts:")
-    bot.register_next_step_handler(message, process_after_hours)
-
-def process_after_hours(message):
-    try:
-        shifts = int(message.text)
-        total = shifts * AFTER_HOURS_RATE
-        user_data.setdefault("after_hours", 0)
-        user_data["after_hours"] += total
-        bot.send_message(message.chat.id, f"✅ Added ${total} from After Hours.")
-    except:
-        bot.send_message(message.chat.id, "❌ Invalid number. Try again.")
-
-# === Add Cut ===
-@bot.message_handler(func=lambda m: m.text == "💰 Add Cut")
-def add_cut(message):
-    bot.send_message(message.chat.id, "Enter bonus amount ($):")
-    bot.register_next_step_handler(message, process_cut)
-
-def process_cut(message):
-    try:
-        cut = float(message.text)
-        user_data.setdefault("cut", 0)
-        user_data["cut"] += cut
-        bot.send_message(message.chat.id, f"✅ Added ${cut} to Cut.")
-    except:
-        bot.send_message(message.chat.id, "❌ Invalid number. Try again.")
-
-# === View Stats ===
-@bot.message_handler(func=lambda m: m.text == "📊 View Monthly Stats")
-def view_stats(message):
-    loads_total = sum(user_data.get("month_data", []))
-    after_hours = user_data.get("after_hours", 0)
-    cut = user_data.get("cut", 0)
-    tax = user_data.get("tax", DEFAULT_TAX)
-    final_salary = (loads_total + after_hours + cut) * (1 - tax / 100)
-    bot.send_message(message.chat.id,
-        f"📅 Monthly Stats:\n"
-        f"Loads: ${loads_total:.2f}\n"
-        f"After Hours: ${after_hours:.2f}\n"
-        f"Cut: ${cut:.2f}\n"
-        f"Tax: {tax}%\n"
-        f"💵 Final Salary: ${final_salary:.2f}"
-    )
-
 # === Settings ===
 @bot.message_handler(func=lambda m: m.text == "⚙️ Settings")
 def settings(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("Change Percentage", "Change Tax")
-    markup.add("⬅️ Back")
+    markup.add("Change Percentage", "⬅️ Back")
     bot.send_message(message.chat.id, "⚙️ Settings Menu:", reply_markup=markup)
 
 @bot.message_handler(func=lambda m: m.text == "Change Percentage")
@@ -120,17 +52,134 @@ def set_percentage(message):
     except:
         bot.send_message(message.chat.id, "❌ Invalid number.")
 
-@bot.message_handler(func=lambda m: m.text == "Change Tax")
-def change_tax(message):
-    bot.send_message(message.chat.id, "Enter new tax rate (e.g. 6):")
-    bot.register_next_step_handler(message, set_tax)
+# === Month Selection ===
+def ask_month(callback, next_step):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    months = ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+    for i in range(0, len(months), 3):
+        markup.row(*months[i:i+3])
+    bot.send_message(callback.chat.id, "📅 Select month for this entry:", reply_markup=markup)
+    bot.register_next_step_handler(callback, next_step)
 
-def set_tax(message):
+# === Add Load ===
+@bot.message_handler(func=lambda m: m.text == "➕ Add Load")
+def add_load(message):
+    bot.send_message(message.chat.id, "Enter gross amount ($):")
+    bot.register_next_step_handler(message, process_gross)
+
+def process_gross(message):
     try:
-        user_data["tax"] = float(message.text)
-        bot.send_message(message.chat.id, f"✅ Tax updated to {message.text}%")
+        gross = float(message.text)
+        user_data["pending_gross"] = gross
+        ask_month(message, finalize_gross)
     except:
         bot.send_message(message.chat.id, "❌ Invalid number.")
+
+def finalize_gross(message):
+    month = message.text
+    gross = user_data.pop("pending_gross")
+    percentage = user_data.get("percentage", DEFAULT_PERCENTAGE)
+    salary = gross * (percentage / 100)
+    net = salary * (1 - TAX / 100)
+    user_data.setdefault("months", {}).setdefault(month, 0)
+    user_data["months"][month] += net
+    sheet.append_row([str(datetime.now().date()), month, gross, "", "", percentage, TAX, net])
+    bot.send_message(message.chat.id,
+        f"✅ Load added for {month}:\n"
+        f"Gross: ${gross:.2f}\n"
+        f"Your percentage: {percentage}%\n"
+        f"Earnings before tax: ${salary:.2f}\n"
+        f"Tax (7%): -${salary * TAX / 100:.2f}\n"
+        f"💵 Net earnings from this load: ${net:.2f}\n\n"
+        f"📅 Total for {month}: ${user_data['months'][month]:.2f}"
+    )
+    notify_owner("Load", month, gross, net)
+
+# === Add After Hours ===
+@bot.message_handler(func=lambda m: m.text == "🌙 Add After Hours")
+def add_after_hours(message):
+    bot.send_message(message.chat.id, "Enter number of shifts:")
+    bot.register_next_step_handler(message, process_after_hours)
+
+def process_after_hours(message):
+    try:shifts = int(message.text)
+        user_data["pending_shifts"] = shifts
+        ask_month(message, finalize_after_hours)
+    except:
+        bot.send_message(message.chat.id, "❌ Invalid number.")
+
+def finalize_after_hours(message):
+    month = message.text
+    shifts = user_data.pop("pending_shifts")
+    total = shifts * AFTER_HOURS_RATE
+    net = total * (1 - TAX / 100)
+    user_data.setdefault("months", {}).setdefault(month, 0)
+    user_data["months"][month] += net
+    sheet.append_row([str(datetime.now().date()), month, "", shifts, "", "", TAX, net])
+    bot.send_message(message.chat.id,
+        f"✅ After Hours added for {month}:\n"
+        f"Shifts: {shifts}\n"
+        f"Total before tax: ${total:.2f}\n"
+        f"Tax (7%): -${total * TAX / 100:.2f}\n"
+        f"💵 Net earnings: ${net:.2f}\n\n"
+        f"📅 Total for {month}: ${user_data['months'][month]:.2f}"
+    )
+    notify_owner("After Hours", month, total, net)
+
+# === Add Cut ===
+@bot.message_handler(func=lambda m: m.text == "💰 Add Cut")
+def add_cut(message):
+    bot.send_message(message.chat.id, "Enter bonus amount ($):")
+    bot.register_next_step_handler(message, process_cut)
+
+def process_cut(message):
+    try:
+        cut = float(message.text)
+        user_data["pending_cut"] = cut
+        ask_month(message, finalize_cut)
+    except:
+        bot.send_message(message.chat.id, "❌ Invalid number.")
+
+def finalize_cut(message):
+    month = message.text
+    cut = user_data.pop("pending_cut")
+    net = cut * (1 - TAX / 100)
+    user_data.setdefault("months", {}).setdefault(month, 0)
+    user_data["months"][month] += net
+    sheet.append_row([str(datetime.now().date()), month, "", "", cut, "", TAX, net])
+    bot.send_message(message.chat.id,
+        f"✅ Cut added for {month}:\n"
+        f"Bonus: ${cut:.2f}\n"
+        f"Tax (7%): -${cut * TAX / 100:.2f}\n"
+        f"💵 Net earnings: ${net:.2f}\n\n"
+        f"📅 Total for {month}: ${user_data['months'][month]:.2f}"
+    )
+    notify_owner("Cut", month, cut, net)
+
+# === View Monthly Stats ===
+@bot.message_handler(func=lambda m: m.text == "📊 View Monthly Stats")
+def view_stats(message):
+    if "months" not in user_data:
+        bot.send_message(message.chat.id, "No data yet.")
+        return
+    stats = sorted(user_data["months"].items(), key=lambda x: x[1], reverse=True)
+    msg = "📊 Monthly Stats:\n"
+    for i, (month, total) in enumerate(stats[:3], 1):
+        msg += f"{i}. {month}: ${total:.2f}\n"
+    bot.send_message(message.chat.id, msg)
+
+# === Notify Owner ===
+def notify_owner(entry_type, month, amount, net):
+    total = user_data["months"][month]
+    bot.send_message(OWNER_ID,
+        f"📣 New entry added:\n"
+        f"Type: {entry_type}\n"
+        f"Month: {month}\n"
+        f"Amount: ${amount:.2f}\n"
+        f"Net: ${net:.2f}\n"
+        f"📅 Total for {month}: ${total:.2f}"
+    )
 
 # === Run Bot ===
 bot.polling()
