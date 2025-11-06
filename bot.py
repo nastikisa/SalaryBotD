@@ -103,7 +103,8 @@ def add_after_hours(message):
     bot.register_next_step_handler(message, process_after_hours)
 
 def process_after_hours(message):
-    try:shifts = int(message.text)
+    try:
+        shifts = int(message.text)
         user_data["pending_shifts"] = shifts
         ask_month(message, finalize_after_hours)
     except:
